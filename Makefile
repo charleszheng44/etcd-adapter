@@ -13,14 +13,27 @@
 # limitations under the License.
 #
 
+.PHONY: test
 test:
 	@go test ./...
 
+.PHONY: bench
 bench:
 	@go test -bench '^Benchmark' ./...
 
+.PHONY: gofmt
 gofmt:
 	@find . -name "*.go" | xargs gofmt -w
 
+.PHONY: lint
 lint:
 	@golangci-lint run
+
+.PHONY: build
+build: clean
+	@[ -d bin ] || mkdir bin
+	GOOS=$(GOOS) go build -o bin/etcd-adapter
+
+.PHONY: clean
+clean:
+	-[ -d bin ] && rm -rf bin 

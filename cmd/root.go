@@ -30,6 +30,7 @@ import (
 	"github.com/api7/etcd-adapter/internal/adapter"
 	"github.com/api7/etcd-adapter/internal/backends/btree"
 	"github.com/api7/etcd-adapter/internal/backends/mysql"
+	"github.com/api7/etcd-adapter/internal/backends/tidb"
 	"github.com/api7/etcd-adapter/internal/config"
 )
 
@@ -39,14 +40,15 @@ var rootCmd = &cobra.Command{
 	Use:   "etcd-adapter",
 	Short: "The bridge between etcd protocol and other storage backends.",
 	Run: func(cmd *cobra.Command, args []string) {
-		// initialize logger
-		logger, err := log.NewLogger()
 
 		// initialize configuration
-		err = config.Init(configFile, logger)
+		loggerOpts, err := config.Init(configFile)
 		if err != nil {
 			return
 		}
+
+		// initialize logger
+		logger, err := log.NewLogger(loggerOpts...)
 
 		// initialize backend
 		var backend server.Backend
@@ -61,6 +63,18 @@ var rootCmd = &cobra.Command{
 				logger.Panic("failed to create mysql backend: ", err)
 				return
 			}
+		case "tidb":
+			tidbConfig := config.Config.DataSource.TiDB
+			backend, err = tidb.NewTiDBCache(context.TODO(), &tidb.Options{
+				Host:     tidbConfig.Host,
+				Port:     tidbConfig.Port,
+				Database: tidbConfig.Database,
+			}, logger)
+			if err != nil {
+				logger.Panic("failed to create tidb backend: ", err)
+				return
+			}
+
 		default:
 			backend = btree.NewBTreeCache(logger)
 		}
@@ -73,6 +87,7 @@ var rootCmd = &cobra.Command{
 			panic(err)
 		}
 		go func() {
+			fmt.Printf("etcd-adapter is listening at %v...\n", ln.Addr().String())
 			if err := adapter.Serve(context.Background(), ln); err != nil {
 				logger.Panic(err)
 				return
@@ -104,7 +119,6 @@ var rootCmd = &cobra.Command{
 func Execute() {
 	// declare flags
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file")
-
 	// execute root command
 	err := rootCmd.Execute()
 	if err != nil {

@@ -4,9 +4,11 @@ go 1.16
 
 require (
 	github.com/api7/gopkg v0.1.2
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/google/btree v1.0.1
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0
 	github.com/k3s-io/kine v0.8.1
+	github.com/pkg/errors v0.9.1
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.3.0
 	github.com/spf13/viper v1.10.0
@@ -20,6 +22,4 @@ require (
 	google.golang.org/grpc v1.42.0
 )
 
-replace (
-	go.etcd.io/etcd v0.0.0-20191023171146-3cf2f69b5738 => go.etcd.io/etcd v3.3.27+incompatible
-)
+replace go.etcd.io/etcd v0.0.0-20191023171146-3cf2f69b5738 => go.etcd.io/etcd v3.3.27+incompatible

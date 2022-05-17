@@ -23,9 +23,16 @@ type mysqlConfig struct {
 	Database string `mapstructure:"database"`
 }
 
+type tidbConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     string `mapstructure:"port"`
+	Database string `mapstructure:"database"`
+}
+
 type datasource struct {
 	Type  string      `mapstructure:"type"`
 	MySQL mysqlConfig `mapstructure:"mysql"`
+	TiDB  tidbConfig  `mapstructure:"tidb"`
 }
 
 type config struct {

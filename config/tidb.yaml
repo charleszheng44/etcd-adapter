@@ -1,0 +1,13 @@
+server:
+  host: 127.0.0.1
+  port: 2399
+
+log:
+  level: info 
+
+datasource:
+  type: tidb
+  tidb:
+    host: 127.0.0.1
+    port: 4000
+    database: bigetc
