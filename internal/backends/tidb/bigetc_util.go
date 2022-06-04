@@ -115,7 +115,7 @@ func rowsToEvents(qf queryRowFn, rows *sql.Rows) ([]*server.Event, error) {
 			kv      server.KeyValue
 			create  bool
 			del     bool
-			prevRev int64
+			prevRev *int64
 		)
 		if err := rows.Scan(&kv.Key, &kv.Value,
 			&create, &del,
@@ -138,7 +138,11 @@ func rowsToEvents(qf queryRowFn, rows *sql.Rows) ([]*server.Event, error) {
 			if qf == nil {
 				return events, errors.New("the queryRowFn is not set")
 			}
-			prevKV, err := queryKV(qf, kv.Key, prevRev)
+			if prevRev == nil {
+				return events, errors.New("previous revision of " +
+					"the update event cannot be null")
+			}
+			prevKV, err := queryKV(qf, kv.Key, *prevRev)
 			if err != nil {
 				return events, errors.Wrap(err, "failed to queryKV")
 			}

@@ -23,16 +23,26 @@ func (tc *tidbCache) createTable() error {
 	// Etcd data model: https://etcd.io/docs/v3.4/learning/data_model/
 	// revision v.s. mod revision v.s. version:
 	// https://github.com/etcd-io/etcd/issues/6518
-	// old_v is used for the update events
+	//
+	// Column definitions
+	// k: key
+	// v: value
+	// crt: true if it is the create txn
+	// del: true if it is the delete txn
+	// revision: the revision(tidb tso when txn begins) of the txn
+	// prev_rev: the previous revision (for an UPDATE event, both old
+	//           and new values need to be returned
+	// lease: lease value
+	// see https://etcd.io/docs/v3.3/dev-guide/interacting_v3/#grant-leases
 	_, err := tc.db.Exec(`
 		CREATE TABLE IF NOT EXISTS _bigetc_store (
 			k VARCHAR(255) NOT NULL,
 			v MEDIUMBLOB NOT NULL,
-			crt BOOLEAN,
-			del BOOLEAN,
+			crt BOOLEAN DEFAULT FALSE,
+			del BOOLEAN DEFAULT FALSE,
 			revision BIGINT NOT NULL,
 			prev_rev BIGINT,
-			lease INTEGER,
+			lease INTEGER DEFAULT 0,
 			PRIMARY KEY (k, revision) CLUSTERED
 		);
 	`)
@@ -54,7 +64,8 @@ func (tc *tidbCache) createTable() error {
 	return err
 }
 
-func NewTiDBCache(ctx context.Context, opt *Options, logger *log.Logger) (server.Backend, error) {
+func NewTiDBCache(ctx context.Context,
+	opt *Options, logger *log.Logger) (server.Backend, error) {
 	db, err := sql.Open("mysql",
 		fmt.Sprintf("root:@tcp(%s:%s)/%s", opt.Host, opt.Port, opt.Database))
 	if err != nil {
@@ -129,10 +140,10 @@ func (tc *tidbCache) Create(ctx context.Context,
 	}
 	_, err = txn.Exec(`
 		INSERT INTO 
-			_bigetc_store (k, v, crt, del, revision, lease)
+			_bigetc_store (k, v, crt, revision, lease)
 		VALUES 
-			(?, ?, ?, ?, ?, ?)
-	`, key, value, true, false, currRev, lease)
+			(?, ?, ?, ?, ?)
+	`, key, value, true, currRev, lease)
 	if err != nil {
 		return
 	}
@@ -219,12 +230,10 @@ func (tc *tidbCache) Delete(ctx context.Context,
 
 	if _, err := txn.Exec(`
 		INSERT INTO	
-			_bigetc_store (k, v, revision, del)
+			_bigetc_store (k, v, del, revision)
 		VALUES
 			(?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			del = VALUES(del)
-	`, key, kv.Value, revision, true); err != nil {
+	`, key, kv.Value, true, currRev); err != nil {
 		return currRev, nil, false, err
 	}
 
@@ -367,10 +376,10 @@ func (tc *tidbCache) Update(ctx context.Context,
 	// 2. insert the new entry into the _bigetc_store
 	if _, err = txn.Exec(`
 		INSERT INTO 
-			_bigetc_store (k, v, crt, del, revision, prev_rev, lease)
+			_bigetc_store (k, v, revision, prev_rev, lease)
 		VALUES 
-			(?, ?, ?, ?, ?, ?, ?) 
-	`, key, value, false, false, currRev, latestRev, lease); err != nil {
+			(?, ?, ?, ?, ?) 
+	`, key, value, currRev, latestRev, lease); err != nil {
 		return currRev, nil, false, err
 	}
 
@@ -391,8 +400,7 @@ func (tc *tidbCache) Update(ctx context.Context,
 func (tc *tidbCache) Watch(ctx context.Context,
 	prefix string, revision int64) <-chan []*server.Event {
 	watchChan := make(chan []*server.Event)
-
-	// tmpRev is used to mark the largest revision that has being sent
+	// tmpRev is used to mark the largest(last) revision that has being sent
 	tmpRev := revision
 	go func() {
 		defer func() {
@@ -403,9 +411,9 @@ func (tc *tidbCache) Watch(ctx context.Context,
 			case <-ctx.Done():
 				return
 			default:
-				// get all events with revision larger than the lastRevision
-				// more recent events will be at the further back of the slice
-				rows, err := tc.db.Query(`
+				// get all events with revision larger than the tmpRev
+				// events are sorted in the ascending order of the revision.
+				query := fmt.Sprintf(`
 					SELECT
 						k, v, crt, del, revision, prev_rev, lease
 					FROM
@@ -413,22 +421,27 @@ func (tc *tidbCache) Watch(ctx context.Context,
 					WHERE
 						k
 					LIKE
-						'?'
+						'%s'
 					AND
-						revision > ?
+						revision > %d
 					ORDER BY
 						revision
 					ASC
 				`, prefix+"%", tmpRev)
+				rows, err := tc.db.Query(query)
 				if err != nil {
 					return
 				}
 
-				// push all the qualified events
+				// push all qualified events in the order of revision
 				events, err := rowsToEvents(tc.db.QueryRow, rows)
 				if err != nil {
-					log.Errorf("failed to convert rows to events: %v", err)
+					tc.logger.Errorf("failed to convert rows "+
+						"to events: %v", err)
 					close(watchChan)
+				}
+				if len(events) <= 0 {
+					continue
 				}
 				watchChan <- events
 
